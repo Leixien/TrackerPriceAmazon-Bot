@@ -10,7 +10,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-token = "5403181561:AAH7sqCoJk-ryS6JXq72XgA2UXauEJHWynI "
+token = 'BotToken'
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello sir, Welcome to the Amazon Tracker Bot.\nPlease write /help to see the commands available.")
