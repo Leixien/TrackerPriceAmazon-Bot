@@ -1,4 +1,4 @@
-# <a href = 'https://github.com/Leixien/TrackerPriceAmazon-Bot'>TrackerPriceAmazon-Bot</a>
+# TrackerPriceAmazon-Bot
 A simple Amazon price tracking bot written in Python by <a href = 'https://github.com/Leixien'>Leixien</a>
 
 # Description of the Code
