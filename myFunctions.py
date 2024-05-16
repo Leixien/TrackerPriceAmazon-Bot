@@ -9,18 +9,29 @@ def saveLink(userinput):
     return sendScraper
 
 def createSubStringLinkAmazon(str):
-    str = str.split('/')[3]
-    return str
+    segments = str.strip().rpartition('/')
+    if len(segments) == 3: 
+        return segments[-1]
+    else:
+        return "" 
 
 def leggiFileCSV():
-    with open('file.csv', 'r') as f:
-        key = 1
+    try:
+        with open('file.csv', 'r') as f:
+            key = 1
+            prod = {}
+            for line in f:
+                print(f"Lettura riga: {line}")
+                value = createSubStringLinkAmazon(line)
+                print(f"Value : {value}")
+                if value:
+                    prod[key] = value
+                    key += 1
+                    value = ''
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
         prod = {}
-        for line in f:
-            value = createSubStringLinkAmazon(line)
-            prod[key] = value
-            key += 1
-    return prod        
+    return prod     
 
 def trovaLink(inputLink):
     with open('file.csv', 'r') as f:
