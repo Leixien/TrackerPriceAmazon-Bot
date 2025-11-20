@@ -3,17 +3,28 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, Updater, InlineQueryHandler, CallbackContext
 import myFunctions as mf
 import scraper
+import config
+from handlers import amazon_affiliate
+from utils import user_manager, scheduler
 
 logging.basicConfig(
-    
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-token = 'BotToken'
+token = config.BOT_TOKEN
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello sir, Welcome to the Amazon Tracker Bot.\nPlease write /help to see the commands available.")
+    # Registra utente per reminder giornalieri
+    user_id = update.effective_user.id
+    was_new = user_manager.save_user(user_id)
+
+    if was_new:
+        message = "Hello sir, Welcome to the Amazon Tracker Bot.\nPlease write /help to see the commands available.\n\n✅ Reminder giornalieri attivi alle 11:00 e 16:00! 🔔"
+    else:
+        message = "Hello sir, Welcome to the Amazon Tracker Bot.\nPlease write /help to see the commands available."
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=message)
     
 async def dev(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = "🇮🇹 Bot per il tracciamento dei prezzi dei prodotti su Amazon\n🇬🇧 Price Tracker Bot for Amazon Product!\nDev: <a href='https://t.me/cringejon'>Giuseppe Scappaticci</a>"
@@ -34,10 +45,11 @@ async def randomSong(update : Update, context : ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id = update.effective_chat.id, text = output)
     
 async def help(update : Update, context : ContextTypes.DEFAULT_TYPE):
-    output = 'Comandi:\n' + '\t/start - Inizia a usare il bot\n' + '\t/help - Visualizza questo messaggio\n' + '\t/discord - Entra nel server discord \n' + '\t/song - Scopri una canzone random\n' 
+    output = 'Comandi:\n' + '\t/start - Inizia a usare il bot\n' + '\t/help - Visualizza questo messaggio\n' + '\t/discord - Entra nel server discord \n' + '\t/song - Scopri una canzone random\n'
     output = output + '\t/url {url prodotto amazon} - Salva prodotto da tracciare\n' + '\t/uri {link prodotto amazon} - Invia prezzo attuale del prodotto\n'
-    output = output + '\t/prodotti - Visualizza tutti i prodotti tracciati'
-    await context.bot.send_message(chat_id = update.effective_chat.id, text = output)
+    output = output + '\t/prodotti - Visualizza tutti i prodotti tracciati\n\n'
+    output = output + '🔗 <b>Link Affiliati:</b>\n' + '\t/convertlink {link} - Converti link Amazon in affiliato\n' + '\t/stats - Visualizza le tue statistiche\n' + '\t/stop - Disattiva reminder giornalieri'
+    await context.bot.send_message(chat_id = update.effective_chat.id, text = output, parse_mode='HTML')
 
 async def sendProduct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     userinput = update.message.text
@@ -83,35 +95,62 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
 if __name__ == '__main__':
     application = ApplicationBuilder().token(token).build()
-    
+
+    # === Handler Comandi Esistenti ===
     keyHandlerCommand = CommandHandler("prodotti", products)
     application.add_handler(keyHandlerCommand)
-    
+
     application.add_handler(CallbackQueryHandler(button))
-    
+
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
-    
+
     devCommandHandler = CommandHandler('dev', dev)
     application.add_handler(devCommandHandler)
-    
+
     helpHandler = CommandHandler('help', help)
     application.add_handler(helpHandler)
-    
+
     prodHandlerCommand = CommandHandler('sendProduct', sendProd)
     application.add_handler(prodHandlerCommand)
-    
+
     discordHandlerCommand = CommandHandler('discord', discordInviteCommand)
     application.add_handler(discordHandlerCommand)
-     
+
     songHandlerCommand = CommandHandler('song', randomSong)
     application.add_handler(songHandlerCommand)
-    
+
     urlSavedCommand = CommandHandler('url', takeLink)
     application.add_handler(urlSavedCommand)
-    
+
     trackItemCommand = CommandHandler('uri', sendProduct)
     application.add_handler(trackItemCommand)
-    
+
+    # === Handler Link Affiliati (NUOVI) ===
+    # Comando conversione manuale
+    convertlink_handler = CommandHandler('convertlink', amazon_affiliate.convert_link_command)
+    application.add_handler(convertlink_handler)
+
+    # Comando statistiche
+    stats_handler = CommandHandler('stats', amazon_affiliate.stats_command)
+    application.add_handler(stats_handler)
+
+    # Comando stop reminder
+    stop_handler = CommandHandler('stop', user_manager.stop_reminders)
+    application.add_handler(stop_handler)
+
+    # Handler messaggio per intercettare link Amazon automaticamente
+    # IMPORTANTE: deve essere aggiunto PER ULTIMO per non interferire con altri handler
+    message_handler = MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        amazon_affiliate.handle_message_with_amazon_link
+    )
+    application.add_handler(message_handler)
+
+    # === Setup Reminder Giornalieri ===
+    scheduler.setup_daily_reminders(application)
+
+    logging.info("Bot avviato con successo! Reminder configurati per le 11:00 e 16:00")
+
     application.run_polling()
     application.idle() 

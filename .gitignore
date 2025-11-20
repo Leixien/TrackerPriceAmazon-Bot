@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Bot data files (user database and stats)
+data/users.json
+data/stats.json

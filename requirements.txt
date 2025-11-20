@@ -1,0 +1,13 @@
+# Bot Telegram
+python-telegram-bot>=20.0
+
+# Web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Timezone support
+pytz>=2023.3
+
+# Environment variables (opzionale ma consigliato)
+python-dotenv>=1.0.0
