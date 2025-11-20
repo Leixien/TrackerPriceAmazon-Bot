@@ -11,3 +11,14 @@ pytz>=2023.3
 
 # Environment variables (opzionale ma consigliato)
 python-dotenv>=1.0.0
+
+# ========================================
+# AI & Database (NUOVI)
+# ========================================
+
+# HTTP async client per Ollama API
+aiohttp>=3.9.0
+
+# Supabase database (opzionale - solo se vuoi usare Supabase)
+# Decommentare solo se configuri Supabase:
+# supabase>=2.0.0

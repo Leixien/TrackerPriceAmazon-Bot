@@ -4,8 +4,8 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHan
 import myFunctions as mf
 import scraper
 import config
-from handlers import amazon_affiliate
-from utils import user_manager, scheduler
+from handlers import amazon_affiliate, ai_assistant
+from utils import user_manager, scheduler, ollama_client
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -48,7 +48,11 @@ async def help(update : Update, context : ContextTypes.DEFAULT_TYPE):
     output = 'Comandi:\n' + '\t/start - Inizia a usare il bot\n' + '\t/help - Visualizza questo messaggio\n' + '\t/discord - Entra nel server discord \n' + '\t/song - Scopri una canzone random\n'
     output = output + '\t/url {url prodotto amazon} - Salva prodotto da tracciare\n' + '\t/uri {link prodotto amazon} - Invia prezzo attuale del prodotto\n'
     output = output + '\t/prodotti - Visualizza tutti i prodotti tracciati\n\n'
-    output = output + '🔗 <b>Link Affiliati:</b>\n' + '\t/convertlink {link} - Converti link Amazon in affiliato\n' + '\t/stats - Visualizza le tue statistiche\n' + '\t/stop - Disattiva reminder giornalieri'
+    output = output + '🔗 <b>Link Affiliati:</b>\n' + '\t/convertlink {link} - Converti link Amazon in affiliato\n' + '\t/stats - Visualizza le tue statistiche\n' + '\t/stop - Disattiva reminder giornalieri\n\n'
+
+    if config.AI_ENABLED:
+        output = output + '🤖 <b>AI Assistant:</b>\n' + '\t/aihelp - Come usare l\'assistente AI\n' + '\tInvia una richiesta prodotto per consigli intelligenti!'
+
     await context.bot.send_message(chat_id = update.effective_chat.id, text = output, parse_mode='HTML')
 
 async def sendProduct(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,9 +93,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
 
     #await query.answer()
-    
+
     if query.data == 'Nessun prodotto selezioanto!':
         await context.bot.answer_callback_query(callback_query_id=query.id, text="Nessun prodotto selezionato", show_alert=True)
+
+
+async def unified_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handler unificato per messaggi non-comando
+
+    Priorità:
+    1. Se contiene link Amazon → conversione affiliati
+    2. Altrimenti, se AI abilitata → richiesta AI per consigli prodotti
+    3. Altrimenti → ignora
+    """
+    text = update.message.text
+
+    # 1. Controlla se contiene link Amazon
+    if amazon_affiliate.is_amazon_link(text):
+        await amazon_affiliate.handle_message_with_amazon_link(update, context)
+        return
+
+    # 2. Se AI abilitata, gestisci come richiesta AI
+    if config.AI_ENABLED:
+        await ai_assistant.handle_ai_request(update, context)
+        return
+
+    # 3. Altrimenti ignora (comportamento originale)
+    # Nessuna risposta per messaggi generici senza AI
     
 if __name__ == '__main__':
     application = ApplicationBuilder().token(token).build()
@@ -139,18 +168,37 @@ if __name__ == '__main__':
     stop_handler = CommandHandler('stop', user_manager.stop_reminders)
     application.add_handler(stop_handler)
 
-    # Handler messaggio per intercettare link Amazon automaticamente
+    # === Handler AI Assistant (NUOVI) ===
+    if config.AI_ENABLED:
+        # Comando aihelp
+        aihelp_handler = CommandHandler('aihelp', ai_assistant.ai_help_command)
+        application.add_handler(aihelp_handler)
+        logging.info("🤖 AI Assistant abilitata")
+
+    # === Handler Messaggi Unificato ===
+    # Gestisce sia link Amazon che richieste AI
     # IMPORTANTE: deve essere aggiunto PER ULTIMO per non interferire con altri handler
     message_handler = MessageHandler(
         filters.TEXT & ~filters.COMMAND,
-        amazon_affiliate.handle_message_with_amazon_link
+        unified_message_handler
     )
     application.add_handler(message_handler)
 
     # === Setup Reminder Giornalieri ===
     scheduler.setup_daily_reminders(application)
 
-    logging.info("Bot avviato con successo! Reminder configurati per le 11:00 e 16:00")
+    # === Health Checks ===
+    if config.AI_ENABLED:
+        logging.info("🔍 Verifico connessione Ollama...")
+        # Health check sincrono all'avvio
+        ollama_available = ollama_client.test_ollama_sync()
+        if ollama_available:
+            logging.info(f"✅ Ollama disponibile - Modello: {config.OLLAMA_MODEL}")
+        else:
+            logging.warning(f"⚠️ Ollama NON disponibile su {config.OLLAMA_API_URL}")
+            logging.warning("   AI Assistant non funzionerà. Vedi docs/SETUP_AI.md per installazione")
+
+    logging.info("🚀 Bot avviato con successo! Reminder configurati per le 11:00 e 16:00")
 
     application.run_polling()
     application.idle() 
