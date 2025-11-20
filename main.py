@@ -4,7 +4,7 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHan
 import myFunctions as mf
 import scraper
 import config
-from handlers import amazon_affiliate, ai_assistant
+from handlers import amazon_affiliate, ai_assistant, price_tracker
 from utils import user_manager, scheduler, ollama_client
 
 logging.basicConfig(
@@ -175,6 +175,26 @@ if __name__ == '__main__':
         application.add_handler(aihelp_handler)
         logging.info("🤖 AI Assistant abilitata")
 
+    # === Handler Price Tracking (NUOVI - Supabase) ===
+    if config.SUPABASE_ENABLED:
+        # Comando tracking prodotti
+        track_handler = CommandHandler('track', price_tracker.track_product_command)
+        application.add_handler(track_handler)
+
+        untrack_handler = CommandHandler('untrack', price_tracker.untrack_product_command)
+        application.add_handler(untrack_handler)
+
+        myproducts_handler = CommandHandler('myproducts', price_tracker.my_products_command)
+        application.add_handler(myproducts_handler)
+
+        setalert_handler = CommandHandler('setalert', price_tracker.set_alert_command)
+        application.add_handler(setalert_handler)
+
+        history_handler = CommandHandler('history', price_tracker.price_history_command)
+        application.add_handler(history_handler)
+
+        logging.info("📊 Price Tracking abilitato")
+
     # === Handler Messaggi Unificato ===
     # Gestisce sia link Amazon che richieste AI
     # IMPORTANTE: deve essere aggiunto PER ULTIMO per non interferire con altri handler
@@ -197,6 +217,16 @@ if __name__ == '__main__':
         else:
             logging.warning(f"⚠️ Ollama NON disponibile su {config.OLLAMA_API_URL}")
             logging.warning("   AI Assistant non funzionerà. Vedi docs/SETUP_AI.md per installazione")
+
+    if config.SUPABASE_ENABLED:
+        from utils import supabase_manager
+        logging.info("🔍 Verifico connessione Supabase...")
+        supabase_ok = supabase_manager.check_supabase_health()
+        if supabase_ok:
+            logging.info("✅ Supabase disponibile - Price Tracking attivo")
+        else:
+            logging.warning("⚠️ Supabase NON disponibile")
+            logging.warning("   Price Tracking non funzionerà. Vedi docs/SETUP_SUPABASE.md per configurazione")
 
     logging.info("🚀 Bot avviato con successo! Reminder configurati per le 11:00 e 16:00")
 

@@ -1,124 +1,203 @@
-# 🗄️ Setup Supabase Database (Opzionale)
+# 🗄️ Setup Supabase - Price Tracking Database
 
-Guida per configurare Supabase come database per storico conversazioni e analytics.
+Guida completa per configurare Supabase come database per **tracking prezzi prodotti Amazon**.
 
-> **⚠️ NOTA**: Supabase è **opzionale**. Il bot funziona perfettamente anche senza!
+> **⚠️ NOTA**: Supabase è **opzionale**. Il bot funziona anche senza!
 >
 > Usa Supabase se vuoi:
-> - Storico conversazioni permanente
-> - Analytics avanzate
-> - Sync multi-device
-> - Backup automatico
+> - 📊 Tracciare prezzi prodotti Amazon nel tempo
+> - 📉 Storico prezzi con grafici
+> - 🔔 Alert automatici quando prezzo scende
+> - 💾 Backup automatico cloud
+> - 📈 Analytics risparmi
 
 ---
 
-## 📋 Vantaggi Supabase
+## 📋 Cos'è il Price Tracking?
 
-✅ **Piano FREE** (senza carta di credito):
+Con Supabase abilitato, il bot può:
+
+1. **Tracciare prodotti**: Aggiungi prodotti da monitorare con `/track <link>`
+2. **Storico prezzi**: Vedi come il prezzo è cambiato con `/history <ASIN>`
+3. **Alert prezzi**: Ricevi notifica quando prezzo scende con `/setalert <ASIN> <prezzo>`
+4. **Notifiche automatiche**: Il bot ti avvisa quando il prezzo cambia
+
+---
+
+## 💰 Piano FREE Supabase
+
+✅ **GRATIS FOREVER** (no carta credito):
 - 500MB database storage
 - 2GB bandwidth/mese
 - 50.000 richieste/mese
 - Backup automatici
 
-✅ **Features**:
-- PostgreSQL completo
-- API REST automatica
-- Dashboard web
-- Row Level Security
+**Capienza**: ~10.000 prodotti tracciati + 100.000 rilevamenti prezzi ✅
 
 ---
 
-## 🚀 Setup (5 minuti)
+## 🚀 Setup (10 minuti)
 
 ### 1. Crea Account Supabase
 
 1. Vai su https://supabase.com
-2. Click su "Start your project"
+2. Click "Start your project"
 3. Sign up con GitHub/Google (gratis, no carta)
 
-### 2. Crea Nuovo Progetto
+### 2. Crea Progetto
 
 1. Click "+ New project"
-2. Nome progetto: `amazon-bot` (o quello che vuoi)
-3. Database Password: Genera una strong password (salvala!)
-4. Region: `Europe (West)` (consigliato per Italia)
+2. Nome: `amazon-price-tracker`
+3. Database Password: Genera strong password (salvala!)
+4. Region: **Europe (West)** (consigliato per Italia)
 5. Click "Create new project"
 
-⏱️ Attendi 1-2 minuti per provisioning...
+⏱️ Attendi 1-2 minuti...
 
 ### 3. Ottieni Credenziali
 
-Una volta creato il progetto:
+Una volta creato:
 
-1. Nel menu laterale, vai a ⚙️ **Settings** → **API**
+1. Menu laterale → ⚙️ **Settings** → **API**
 2. Copia:
-   - **Project URL** (es: `https://abcdefgh.supabase.co`)
-   - **Project API Key** (`anon/public` key)
+   - **Project URL** (es: `https://abc123.supabase.co`)
+   - **anon/public API Key** (la chiave `anon`)
 
 ### 4. Crea Tabelle Database
 
-1. Nel menu laterale, vai a 🔨 **SQL Editor**
+1. Menu laterale → 🔨 **SQL Editor**
 2. Click "+ New query"
-3. Copia e incolla questo SQL:
+3. Copia e incolla **TUTTO** questo SQL:
 
 ```sql
--- Tabella conversazioni
-CREATE TABLE conversations (
+-- =========================================
+-- SCHEMA PRICE TRACKING
+-- =========================================
+
+-- Tabella prodotti tracciati
+CREATE TABLE IF NOT EXISTS tracked_products (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    message TEXT NOT NULL,
-    role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant')),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    asin VARCHAR(20) NOT NULL,
+    product_name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    initial_price DECIMAL(10, 2) NOT NULL,
+    last_price DECIMAL(10, 2) NOT NULL,
+    tracked_since TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_checked TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, asin)
 );
 
-CREATE INDEX idx_conversations_user_id ON conversations(user_id);
-CREATE INDEX idx_conversations_created_at ON conversations(created_at DESC);
+CREATE INDEX idx_tracked_products_user_id ON tracked_products(user_id);
+CREATE INDEX idx_tracked_products_asin ON tracked_products(asin);
+CREATE INDEX idx_tracked_products_last_checked ON tracked_products(last_checked);
 
--- Tabella cache prodotti
-CREATE TABLE product_cache (
+-- Tabella storico prezzi
+CREATE TABLE IF NOT EXISTS price_history (
     id BIGSERIAL PRIMARY KEY,
-    query TEXT NOT NULL,
-    products JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    asin VARCHAR(20) NOT NULL,
+    product_name TEXT,
+    price DECIMAL(10, 2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'EUR',
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_product_cache_query ON product_cache(query);
-CREATE INDEX idx_product_cache_created_at ON product_cache(created_at DESC);
+CREATE INDEX idx_price_history_asin ON price_history(asin);
+CREATE INDEX idx_price_history_timestamp ON price_history(timestamp DESC);
 
--- Tabella analytics AI
-CREATE TABLE ai_analytics (
+-- Tabella alert prezzi
+CREATE TABLE IF NOT EXISTS price_alerts (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    query TEXT NOT NULL,
-    response_time_ms INTEGER,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    asin VARCHAR(20) NOT NULL,
+    target_price DECIMAL(10, 2) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    triggered_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id, asin)
 );
 
-CREATE INDEX idx_ai_analytics_user_id ON ai_analytics(user_id);
-CREATE INDEX idx_ai_analytics_created_at ON ai_analytics(created_at DESC);
+CREATE INDEX idx_price_alerts_user_id ON price_alerts(user_id);
+CREATE INDEX idx_price_alerts_asin ON price_alerts(asin);
+CREATE INDEX idx_price_alerts_active ON price_alerts(is_active) WHERE is_active = TRUE;
 
--- Enable Row Level Security (RLS)
-ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE product_cache ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ai_analytics ENABLE ROW LEVEL SECURITY;
+-- Enable Row Level Security
+ALTER TABLE tracked_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE price_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;
 
 -- Policy per service_role (full access)
-CREATE POLICY "Service role has full access" ON conversations
-    FOR ALL USING (auth.role() = 'service_role');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'tracked_products'
+        AND policyname = 'Service role has full access'
+    ) THEN
+        CREATE POLICY "Service role has full access" ON tracked_products
+            FOR ALL USING (true);
+    END IF;
 
-CREATE POLICY "Service role has full access" ON product_cache
-    FOR ALL USING (auth.role() = 'service_role');
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'price_history'
+        AND policyname = 'Service role has full access'
+    ) THEN
+        CREATE POLICY "Service role has full access" ON price_history
+            FOR ALL USING (true);
+    END IF;
 
-CREATE POLICY "Service role has full access" ON ai_analytics
-    FOR ALL USING (auth.role() = 'service_role');
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'price_alerts'
+        AND policyname = 'Service role has full access'
+    ) THEN
+        CREATE POLICY "Service role has full access" ON price_alerts
+            FOR ALL USING (true);
+    END IF;
+END $$;
+
+-- Funzione per ottenere alert triggered
+CREATE OR REPLACE FUNCTION get_triggered_alerts()
+RETURNS TABLE (
+    user_id BIGINT,
+    asin VARCHAR(20),
+    target_price DECIMAL(10, 2),
+    current_price DECIMAL(10, 2),
+    product_name TEXT,
+    url TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        pa.user_id,
+        pa.asin,
+        pa.target_price,
+        tp.last_price AS current_price,
+        tp.product_name,
+        tp.url
+    FROM price_alerts pa
+    INNER JOIN tracked_products tp ON pa.asin = tp.asin AND pa.user_id = tp.user_id
+    WHERE pa.is_active = TRUE
+    AND tp.last_price <= pa.target_price;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
-4. Click "Run" o premisend Cmd/Ctrl + Enter
-5. Dovresti vedere "Success. No rows returned"
+4. Click **RUN** o premi Cmd/Ctrl + Enter
+5. Dovresti vedere: `Success. No rows returned`
+
+✅ **Tabelle create!**
 
 ### 5. Configura Bot
 
-Modifica `.env` sul server del bot:
+Sul server del bot, modifica `.env`:
+
+```bash
+nano .env
+```
+
+Aggiungi:
 
 ```env
 # Supabase Configuration
@@ -132,6 +211,11 @@ Sostituisci con i tuoi valori copiati al punto 3.
 
 ```bash
 pip install supabase
+```
+
+O aggiungi a `requirements.txt`:
+```
+supabase>=2.0.0
 ```
 
 ### 7. Restart Bot
@@ -149,96 +233,169 @@ Supabase health check: OK
 
 ## ✅ Verifica Funzionamento
 
-### Test 1: Invia Messaggio al Bot
+### Test 1: Traccia Prodotto
 
 Su Telegram:
 ```
-Mi consigli un laptop gaming?
+/track https://www.amazon.it/dp/B08N5WRWNW/
+```
+
+Risposta attesa:
+```
+✅ Prodotto aggiunto al tracking!
+📦 Nome prodotto...
+💰 Prezzo attuale: 99.99€
 ```
 
 ### Test 2: Controlla Dashboard Supabase
 
-1. Vai su Supabase Dashboard
-2. Menu laterale → 🗂️ **Table Editor**
-3. Seleziona tabella `conversations`
-4. Dovresti vedere la tua conversazione salvata!
+1. Dashboard Supabase → 🗂️ **Table Editor**
+2. Seleziona tabella `tracked_products`
+3. Dovresti vedere il prodotto appena aggiunto!
 
----
+### Test 3: Vedi Prodotti Tracciati
 
-## 📊 Interrogare il Database
-
-### Via Dashboard (GUI)
-
-Dashboard → Table Editor → Seleziona tabella
-
-### Via SQL Editor
-
-Esempi query utili:
-
-```sql
--- Conversazioni recenti
-SELECT * FROM conversations
-ORDER BY created_at DESC
-LIMIT 10;
-
--- Conversazioni per utente
-SELECT * FROM conversations
-WHERE user_id = 123456789
-ORDER BY created_at DESC;
-
--- Statistiche utenti più attivi
-SELECT user_id, COUNT(*) as num_messages
-FROM conversations
-GROUP BY user_id
-ORDER BY num_messages DESC;
-
--- Analytics tempi risposta
-SELECT
-    DATE(created_at) as date,
-    AVG(response_time_ms) as avg_response_ms,
-    COUNT(*) as num_requests
-FROM ai_analytics
-GROUP BY DATE(created_at)
-ORDER BY date DESC;
+```
+/myproducts
 ```
 
 ---
 
-## 🔒 Sicurezza
+## 🔔 Setup Cron Job (Controllo Prezzi Automatico)
 
-### Row Level Security (RLS)
+Per controllare i prezzi periodicamente e inviare notifiche, configura un cron job:
 
-Le policy create permettono solo al bot (service_role) di accedere ai dati.
+### Opzione 1: Cron (Semplice)
 
-### Protezione API Key
+```bash
+# Apri crontab
+crontab -e
 
-⚠️ **MAI condividere** la `SUPABASE_KEY`!
+# Aggiungi (controlla ogni 6 ore)
+0 */6 * * * cd /path/to/TrackerPriceAmazon-Bot && python scripts/check_prices.py >> logs/price_check.log 2>&1
 
-✅ Usa variabili d'ambiente (`.env`)
-✅ Aggiungi `.env` al `.gitignore`
+# Salva e chiudi
+```
 
-### Backup
+### Opzione 2: Systemd Timer (Avanzato)
 
-Supabase fa backup automatici, ma puoi esportare manualmente:
+Crea `/etc/systemd/system/amazon-price-check.service`:
 
-Dashboard → Settings → Database → Download backup
+```ini
+[Unit]
+Description=Amazon Price Checker
+After=network.target
+
+[Service]
+Type=oneshot
+User=tuoutente
+WorkingDirectory=/path/to/TrackerPriceAmazon-Bot
+ExecStart=/usr/bin/python3 scripts/check_prices.py
+StandardOutput=append:/var/log/price-check.log
+StandardError=append:/var/log/price-check.log
+```
+
+Crea `/etc/systemd/system/amazon-price-check.timer`:
+
+```ini
+[Unit]
+Description=Amazon Price Check Timer
+Requires=amazon-price-check.service
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Attiva:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable amazon-price-check.timer
+sudo systemctl start amazon-price-check.timer
+
+# Verifica
+sudo systemctl status amazon-price-check.timer
+```
+
+### Test Manuale
+
+```bash
+cd /path/to/TrackerPriceAmazon-Bot
+python scripts/check_prices.py
+```
 
 ---
 
-## 💰 Limiti Piano Free
+## 📱 Comandi Bot Disponibili
 
-| Risorsa | Limite |
-|---------|--------|
-| Storage | 500MB |
-| Bandwidth | 2GB/mese |
-| Richieste API | 50.000/mese |
-| Righe tabella | Illimitate (nel limite storage) |
+Con Supabase configurato:
 
-**Quante conversazioni?**
-- Conversazione media: ~500 bytes
-- 500MB = ~1.000.000 conversazioni ✅
+| Comando | Descrizione | Esempio |
+|---------|-------------|---------|
+| `/track <link>` | Aggiungi prodotto al tracking | `/track https://amazon.it/dp/...` |
+| `/untrack <ASIN>` | Rimuovi prodotto | `/untrack B08N5WRWNW` |
+| `/myproducts` | Lista prodotti tracciati | `/myproducts` |
+| `/setalert <ASIN> <prezzo>` | Imposta alert prezzo | `/setalert B08N5WRWNW 50` |
+| `/history <ASIN>` | Storico prezzi (30 giorni) | `/history B08N5WRWNW` |
 
-Difficile raggiungere i limiti per uso normale!
+---
+
+## 📊 Query Analytics Utili
+
+### Prodotti tracciati per utente
+
+```sql
+SELECT user_id, COUNT(*) as num_products
+FROM tracked_products
+GROUP BY user_id
+ORDER BY num_products DESC;
+```
+
+### Prodotti con maggior sconto
+
+```sql
+SELECT
+    product_name,
+    asin,
+    initial_price,
+    last_price,
+    (initial_price - last_price) as discount,
+    ROUND(((initial_price - last_price) / initial_price * 100), 2) as discount_pct
+FROM tracked_products
+WHERE initial_price > last_price
+ORDER BY discount DESC
+LIMIT 10;
+```
+
+### Storico prezzi prodotto
+
+```sql
+SELECT
+    TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI') as datetime,
+    price
+FROM price_history
+WHERE asin = 'B08N5WRWNW'
+ORDER BY timestamp DESC
+LIMIT 50;
+```
+
+### Alert attivi
+
+```sql
+SELECT
+    pa.user_id,
+    tp.product_name,
+    pa.target_price,
+    tp.last_price,
+    (tp.last_price - pa.target_price) as diff
+FROM price_alerts pa
+JOIN tracked_products tp ON pa.user_id = tp.user_id AND pa.asin = tp.asin
+WHERE pa.is_active = TRUE
+ORDER BY diff ASC;
+```
 
 ---
 
@@ -246,137 +403,123 @@ Difficile raggiungere i limiti per uso normale!
 
 ### Problema: "Supabase non configurato"
 
-**Causa**: SUPABASE_URL o SUPABASE_KEY vuoti
-
-**Soluzione**: Verifica `.env`:
-```bash
-cat .env | grep SUPABASE
-```
-
-### Problema: "Errore connessione Supabase"
-
-**Causa**: Credenziali errate o progetto pausato
+**Causa**: `SUPABASE_URL` o `SUPABASE_KEY` vuoti in `.env`
 
 **Soluzione**:
-1. Verifica credenziali nel dashboard Supabase
-2. Verifica progetto attivo (Settings → General)
-
-### Problema: "Row Level Security policy violation"
-
-**Causa**: Policy RLS non configurata
-
-**Soluzione**: Ri-esegui SQL per creare policy (punto 4 setup)
+```bash
+cat .env | grep SUPABASE
+# Verifica che siano impostati
+```
 
 ### Problema: "Table does not exist"
 
 **Causa**: Tabelle non create
 
-**Soluzione**: Esegui SQL schema (punto 4 setup)
+**Soluzione**: Ri-esegui SQL schema (punto 4 setup)
+
+### Problema: "Policy violation"
+
+**Causa**: RLS policy non configurata
+
+**Soluzione**: Verifica di aver eseguito **tutto** lo SQL, incluse le policy
+
+### Problema: Cron job non funziona
+
+**Causa**: Path errato o permessi
+
+**Soluzione**:
+```bash
+# Test manuale
+cd /path/to/bot
+python scripts/check_prices.py
+
+# Verifica cron log
+grep CRON /var/log/syslog
+```
+
+### Problema: Bot lento dopo tracking molti prodotti
+
+**Causa**: Rate limiting Amazon
+
+**Soluzione**: Aumenta delay in `scripts/check_prices.py` (riga con `asyncio.sleep`)
 
 ---
 
-## 🗑️ Pulizia Vecchi Dati
+## 🗑️ Pulizia Dati Vecchi
 
-Per evitare di riempire il database:
+Per evitare di riempire il database (piano free 500MB):
 
 ```sql
--- Elimina conversazioni più vecchie di 90 giorni
-DELETE FROM conversations
-WHERE created_at < NOW() - INTERVAL '90 days';
+-- Elimina storico prezzi più vecchio di 90 giorni
+DELETE FROM price_history
+WHERE timestamp < NOW() - INTERVAL '90 days';
 
--- Elimina cache prodotti più vecchia di 30 giorni
-DELETE FROM product_cache
-WHERE created_at < NOW() - INTERVAL '30 days';
+-- Elimina prodotti non controllati da 30+ giorni
+DELETE FROM tracked_products
+WHERE last_checked < NOW() - INTERVAL '30 days';
 ```
 
-Puoi automatizzare con Supabase Edge Functions o cron job.
+Automatizza con Supabase Edge Function o cron job.
 
 ---
 
-## 📈 Query Analytics Utili
+## 💡 Tips & Best Practices
 
-### Conversazioni per giorno
+### 1. Frequenza Check Prezzi
 
-```sql
-SELECT
-    DATE(created_at) as date,
-    COUNT(*) as num_conversations
-FROM conversations
-WHERE role = 'user'
-GROUP BY DATE(created_at)
-ORDER BY date DESC;
-```
+- **Ogni 6 ore**: Consigliato (4 check/giorno)
+- **Ogni 12 ore**: OK per pochi prodotti
+- **Ogni 1 ora**: ⚠️ Rischio ban Amazon
 
-### Utenti attivi per mese
+### 2. Limita Prodotti per Utente
 
-```sql
-SELECT
-    DATE_TRUNC('month', created_at) as month,
-    COUNT(DISTINCT user_id) as active_users
-FROM conversations
-GROUP BY DATE_TRUNC('month', created_at)
-ORDER BY month DESC;
-```
-
-### Query prodotti più cercati (via AI)
-
-```sql
-SELECT
-    query,
-    COUNT(*) as num_searches
-FROM ai_analytics
-GROUP BY query
-ORDER BY num_searches DESC
-LIMIT 10;
-```
-
----
-
-## 🚀 Features Avanzate (Opzionali)
-
-### 1. Realtime Updates
-
-Ricevi notifiche quando nuove conversazioni vengono salvate:
+Per evitare abusi, limita numero prodotti:
 
 ```python
-# TODO: Implementare con supabase.channel().on()
+# In price_tracker.py, funzione track_product_command
+products = supabase_manager.get_user_tracked_products(user_id)
+if len(products) >= 10:
+    await context.bot.send_message(...)
+    return
 ```
 
-### 2. API REST
+### 3. Monitora Usage Supabase
 
-Accedi ai dati via HTTP:
+Dashboard → Settings → Usage
+
+Controlla:
+- Storage used
+- Bandwidth
+- API requests
+
+### 4. Backup Periodico
 
 ```bash
-curl https://tuoprogetto.supabase.co/rest/v1/conversations \
-  -H "apikey: TUA_API_KEY" \
-  -H "Authorization: Bearer TUA_API_KEY"
+# Export database
+pg_dump "postgresql://..." > backup.sql
 ```
-
-### 3. Dashboard Personalizzata
-
-Crea dashboard con Grafana/Metabase connesso a Supabase PostgreSQL.
 
 ---
 
 ## ❓ FAQ
 
 **Q: Devo pagare qualcosa?**
-A: No! Piano free permanente, no carta di credito.
+A: No! Piano free permanente, no carta credito.
 
-**Q: Cosa succede se supero i limiti?**
-A: Supabase pausa temporaneamente le richieste. Puoi:
-- Upgrade a piano Pro ($25/mese)
-- Pulire vecchi dati
-- Aspettare nuovo mese (reset limiti)
-
-**Q: I dati sono sicuri?**
-A: Sì. Supabase usa crittografia, backup, e compliance GDPR.
-
-**Q: Posso migrare da Supabase a altro DB?**
-A: Sì! Esporta PostgreSQL dump e importa altrove.
+**Q: Quanti prodotti posso tracciare?**
+A: Limite storage 500MB = ~10.000 prodotti + 100.000 rilevamenti.
 
 **Q: Funziona senza Supabase?**
-A: Sì! Supabase è opzionale. Il bot usa JSON locale come fallback.
+A: Sì! Supabase è opzionale. Senza Supabase il bot funziona normalmente ma senza price tracking.
+
+**Q: I dati sono sicuri?**
+A: Sì. Supabase usa crittografia + backup + GDPR compliance.
+
+**Q: Posso vedere grafici prezzi?**
+A: Sì! Dashboard Supabase → Table Editor → price_history → Chart view.
+
+**Q: Amazon può bannarmi?**
+A: Improbabile se segui rate limiting (2s tra richieste). Non fare scraping aggressivo.
 
 ---
 
@@ -384,7 +527,7 @@ A: Sì! Supabase è opzionale. Il bot usa JSON locale come fallback.
 
 - [Supabase Documentation](https://supabase.com/docs)
 - [PostgreSQL Tutorial](https://www.postgresqltutorial.com/)
-- [Supabase Python Client](https://supabase.com/docs/reference/python/introduction)
+- [Amazon scraping best practices](https://scrapeops.io/web-scraping-playbook/amazon-scraper/)
 
 ---
 
@@ -394,10 +537,13 @@ A: Sì! Supabase è opzionale. Il bot usa JSON locale come fallback.
 - [ ] Progetto creato (Europe West)
 - [ ] Credenziali copiate (URL + API Key)
 - [ ] Tabelle create (SQL eseguito)
-- [ ] Policy RLS configurate
 - [ ] `.env` aggiornato
 - [ ] `pip install supabase` eseguito
 - [ ] Bot riavviato
-- [ ] Test conversazione salvata OK
+- [ ] Test `/track` funzionante
+- [ ] Cron job configurato
+- [ ] Primo alert testato
 
-🎉 **Setup Supabase completato!** Ora hai storico conversazioni persistente!
+🎉 **Setup Supabase Price Tracking completato!**
+
+Ora il bot traccia prezzi e invia notifiche automatiche! 📉🔔
