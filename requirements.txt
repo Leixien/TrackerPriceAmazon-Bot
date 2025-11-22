@@ -1,5 +1,5 @@
-# Bot Telegram
-python-telegram-bot>=20.0
+# Bot Telegram (con job-queue per reminder)
+python-telegram-bot[job-queue]>=20.0
 
 # Web scraping
 requests>=2.31.0

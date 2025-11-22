@@ -4,6 +4,10 @@ Configurazione centralizzata del bot Amazon Tracker & Affiliate Converter
 import os
 from datetime import time
 import pytz
+from dotenv import load_dotenv
+
+# Carica variabili da .env
+load_dotenv()
 
 # Bot Token (da variabile d'ambiente)
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'BotToken')
