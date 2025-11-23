@@ -1,6 +1,6 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, Updater, InlineQueryHandler, CallbackContext
+from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, InlineQueryHandler, CallbackContext
 import myFunctions as mf
 import scraper
 import config
@@ -230,5 +230,4 @@ if __name__ == '__main__':
 
     logging.info("🚀 Bot avviato con successo! Reminder configurati per le 11:00 e 16:00")
 
-    application.run_polling()
-    application.idle() 
+    application.run_polling() 
