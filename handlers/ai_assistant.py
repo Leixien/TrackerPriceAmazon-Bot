@@ -4,13 +4,20 @@ Utilizza Ollama (locale) per generare consigli basati su richieste utente
 """
 import logging
 import re
+import time
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 import config
-from utils import ollama_client, supabase_manager, user_manager
+from utils import ollama_client, user_manager
 from handlers import amazon_affiliate
 
 logger = logging.getLogger(__name__)
+
+# Anti-abuso: il modello gira su un Raspberry, una richiesta per utente ogni N secondi
+AI_COOLDOWN_SECONDS = 30
+MAX_AI_QUERY_CHARS = 500
+_last_request = {}
 
 
 def is_product_request(message_text):
@@ -90,10 +97,21 @@ async def handle_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Non è richiesta prodotto
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=config.MESSAGES['ai_not_product_request']
+            text=config.MESSAGES['ai_not_product_request'],
+            parse_mode='HTML'
         )
         logger.info(f"User {user_id} ha inviato messaggio non-prodotto: {message_text[:50]}")
         return
+
+    now = time.monotonic()
+    if now - _last_request.get(user_id, 0) < AI_COOLDOWN_SECONDS:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"⏳ Attendi {AI_COOLDOWN_SECONDS} secondi tra una richiesta AI e l'altra."
+        )
+        return
+    _last_request[user_id] = now
+    message_text = message_text[:MAX_AI_QUERY_CHARS]
 
     # È richiesta prodotto - mostra "typing..."
     await context.bot.send_chat_action(
@@ -102,9 +120,6 @@ async def handle_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     logger.info(f"Richiesta prodotto AI da user {user_id}: {message_text[:100]}")
-
-    # Salva conversazione in Supabase (opzionale se configurato)
-    supabase_manager.save_conversation(user_id, message_text, "user")
 
     # Genera risposta AI
     try:
@@ -125,7 +140,7 @@ async def handle_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Converti link in affiliati
             converted_links = []
             for link in amazon_links:
-                asin = amazon_affiliate.extract_asin(link)
+                asin = amazon_affiliate._asin_from_path(link)
                 if asin:
                     affiliate_link = amazon_affiliate.create_affiliate_link(asin)
                     ai_response = ai_response.replace(link, affiliate_link)
@@ -134,16 +149,21 @@ async def handle_ai_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             logger.info(f"Convertiti {len(converted_links)} link in risposta AI")
 
-        # Invia risposta
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=ai_response,
-            parse_mode='Markdown',
-            disable_web_page_preview=False
-        )
-
-        # Salva risposta in Supabase
-        supabase_manager.save_conversation(user_id, ai_response, "assistant")
+        # Invia risposta (l'output dell'LLM spesso non è Markdown valido:
+        # in caso di errore di parsing reinvia come testo semplice)
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=ai_response,
+                parse_mode='Markdown',
+                disable_web_page_preview=False
+            )
+        except BadRequest:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=ai_response,
+                disable_web_page_preview=False
+            )
 
         logger.info(f"Risposta AI inviata a user {user_id}")
 

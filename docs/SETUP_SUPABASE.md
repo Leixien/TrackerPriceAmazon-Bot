@@ -61,7 +61,10 @@ Una volta creato:
 1. Menu laterale → ⚙️ **Settings** → **API**
 2. Copia:
    - **Project URL** (es: `https://abc123.supabase.co`)
-   - **anon/public API Key** (la chiave `anon`)
+   - **service_role API Key** (sezione "Project API keys" → `service_role`, clicca "Reveal")
+
+> ⚠️ **NON usare la chiave `anon`**: è pensata per essere pubblica. La chiave `service_role`
+> invece è segreta: tienila solo nel `.env` del server, non committarla e non condividerla.
 
 ### 4. Crea Tabelle Database
 
@@ -126,36 +129,14 @@ ALTER TABLE tracked_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE price_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;
 
--- Policy per service_role (full access)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'tracked_products'
-        AND policyname = 'Service role has full access'
-    ) THEN
-        CREATE POLICY "Service role has full access" ON tracked_products
-            FOR ALL USING (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'price_history'
-        AND policyname = 'Service role has full access'
-    ) THEN
-        CREATE POLICY "Service role has full access" ON price_history
-            FOR ALL USING (true);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies
-        WHERE tablename = 'price_alerts'
-        AND policyname = 'Service role has full access'
-    ) THEN
-        CREATE POLICY "Service role has full access" ON price_alerts
-            FOR ALL USING (true);
-    END IF;
-END $$;
+-- NESSUNA policy permissiva: con RLS attivo e zero policy, le chiavi
+-- anon/authenticated non possono leggere né scrivere nulla.
+-- Il bot usa la chiave service_role, che bypassa RLS.
+-- (Se avevi già eseguito la vecchia versione di questo script, queste righe
+--  rimuovono le policy "USING (true)" che esponevano i dati con la chiave anon.)
+DROP POLICY IF EXISTS "Service role has full access" ON tracked_products;
+DROP POLICY IF EXISTS "Service role has full access" ON price_history;
+DROP POLICY IF EXISTS "Service role has full access" ON price_alerts;
 
 -- Funzione per ottenere alert triggered
 CREATE OR REPLACE FUNCTION get_triggered_alerts()

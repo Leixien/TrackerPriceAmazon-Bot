@@ -1,66 +1,119 @@
+import logging
+import re
+
 import requests
 from bs4 import BeautifulSoup
-import urllib.request as ur
-import csv
-import sys
 
-# url = 'https://www.amazon.it/itek-MAJES-Addressable-telecomando-Radiofrequenza/dp/B07L9FMK56'
-# headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36'}
+logger = logging.getLogger(__name__)
 
-# page = requests.get(url, headers = headers)
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Language': 'it-IT,it;q=0.9',
+}
+REQUEST_TIMEOUT = 10
 
-# bs = bs.BeautifulSoup(page.content, 'html.parser')
-
-# findProductTitle = bs.find(id = 'productTitle').get_text()
-
-# productTitle = findProductTitle.strip()
-
-# findPrice = bs.find('span', class_='a-offscreen').get_text()
-
-# prezzo = 'Prezzo --> ' + findPrice + '\n'
 
 def saveInFile(link):
     if link == "":
         return "Link Empty!"
-    else:
-        localFile = open('file.csv', 'a')
-        localFile.writelines(link+'\n')
-        localFile.close()
-        return 'Link Saved in a CSV File!'
+    with open('file.csv', 'a') as localFile:
+        localFile.write(link + '\n')
+    return 'Link Saved in a CSV File!'
+
+
+def _fetch(link):
+    """
+    Scarica la pagina SOLO se il link è un URL Amazon (anti-SSRF).
+    Gli short link vengono risolti verificando ogni redirect.
+
+    Returns:
+        BeautifulSoup o None
+    """
+    # Import locale per evitare import circolari
+    from handlers import amazon_affiliate
+
+    if not link or not amazon_affiliate.is_amazon_url(link):
+        logger.warning(f"URL non Amazon rifiutato dallo scraper: {link!r}")
+        return None
+
+    current = link
+    try:
+        for _ in range(5):
+            if not amazon_affiliate.is_amazon_url(current):
+                logger.warning(f"Redirect verso host non Amazon bloccato: {current!r}")
+                return None
+            page = requests.get(current, headers=HEADERS, timeout=REQUEST_TIMEOUT, allow_redirects=False)
+            if page.is_redirect and page.headers.get('Location'):
+                current = requests.compat.urljoin(current, page.headers['Location'])
+                continue
+            page.raise_for_status()
+            return BeautifulSoup(page.content, "lxml")
+    except requests.RequestException as e:
+        logger.error(f"Errore nella richiesta: {e}")
+        return None
+
+    logger.warning(f"Troppi redirect per {link!r}")
+    return None
+
 
 def findProdTitle(link):
-    urls = link
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36'}
-    
-    try:
-        page = requests.get(urls, headers = headers)
-        page.raise_for_status()
-    except requests.RequestException as e:
-        print(f"Errore nella richiesta: {e}")
+    soup = _fetch(link)
+    if soup is None:
         return None
-    
-    soup = BeautifulSoup(page.content, "lxml")
-    product_title_element = soup.find(id='productTitle')
 
-    if product_title_element is not None:
-        product_title = product_title_element.get_text().strip()
-        return product_title
-    else:
-        print("Elemento con ID 'productTitle' non trovato")
+    product_title_element = soup.find(id='productTitle')
+    if product_title_element is None:
+        logger.warning("Elemento con ID 'productTitle' non trovato")
         return None
+    return product_title_element.get_text().strip()
+
 
 def findPrice(link):
-    
-    urls = link
+    soup = _fetch(link)
+    if soup is None:
+        return None
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36'}
-    
-    page = requests.get(urls, headers = headers)
+    price_element = soup.find('span', class_='a-offscreen')
+    if price_element is None:
+        logger.warning("Prezzo non trovato nella pagina")
+        return None
+    return 'Prezzo --> ' + price_element.get_text().strip() + '\n'
 
-    bss = BeautifulSoup(page.content, "lxml")
-    
-    findPrice = bss.find('span', class_='a-offscreen').get_text()
 
-    prezzo = 'Prezzo --> ' + findPrice + '\n'
-    
-    return prezzo
+def parse_price(price_str):
+    """
+    Converte una stringa prezzo in float.
+
+    Gestisce formato italiano ("1.299,99 €"), formato con solo virgola
+    ("99,99 €") e formato inglese ("1,299.99").
+
+    Returns:
+        float o None
+    """
+    if not price_str:
+        return None
+
+    match = re.search(r'\d[\d.,]*', price_str)
+    if not match:
+        return None
+    num = match.group(0).rstrip('.,')
+
+    if ',' in num and '.' in num:
+        if num.rfind(',') > num.rfind('.'):
+            # 1.299,99 -> 1299.99
+            num = num.replace('.', '').replace(',', '.')
+        else:
+            # 1,299.99 -> 1299.99
+            num = num.replace(',', '')
+    elif ',' in num:
+        num = num.replace(',', '.')
+    elif num.count('.') == 1 and len(num.split('.')[1]) == 3:
+        # 1.299 -> migliaia senza decimali
+        num = num.replace('.', '')
+
+    try:
+        return float(num)
+    except ValueError:
+        logger.error(f"Errore parsing prezzo '{price_str}'")
+        return None

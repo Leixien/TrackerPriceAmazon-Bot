@@ -62,7 +62,7 @@ IMPORTANTE:
             "options": {
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "max_tokens": 500
+                "num_predict": 500
             }
         }
 
@@ -71,7 +71,7 @@ IMPORTANTE:
             async with session.post(
                 config.OLLAMA_API_URL,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -89,7 +89,7 @@ IMPORTANTE:
                     return None
 
     except asyncio.TimeoutError:
-        logger.error("Timeout chiamata Ollama API (>30s)")
+        logger.error("Timeout chiamata Ollama API (>120s)")
         return None
     except aiohttp.ClientError as e:
         logger.error(f"Errore connessione Ollama: {e}")
@@ -148,31 +148,25 @@ async def list_available_models():
 
 def test_ollama_sync():
     """
-    Test sincrono per verificare Ollama (per debug)
+    Verifica sincrona che Ollama sia raggiungibile e che il modello sia installato.
+    Usa /api/tags (istantaneo) invece di generare testo, che su Raspberry
+    può richiedere più del timeout al primo caricamento del modello.
     """
     import requests
 
+    tags_url = config.OLLAMA_API_URL.replace('/api/generate', '/api/tags')
     try:
-        response = requests.post(
-            config.OLLAMA_API_URL,
-            json={
-                "model": config.OLLAMA_MODEL,
-                "prompt": "Rispondi solo 'OK' se mi ricevi",
-                "stream": False
-            },
-            timeout=10
-        )
-
-        if response.status_code == 200:
-            result = response.json()
-            print(f"✅ Ollama test OK: {result.get('response', '')[:50]}")
-            return True
-        else:
-            print(f"❌ Ollama test FAIL: status {response.status_code}")
+        response = requests.get(tags_url, timeout=5)
+        if response.status_code != 200:
+            logger.warning(f"Ollama test FAIL: status {response.status_code}")
             return False
-
+        models = [m.get('name', '') for m in response.json().get('models', [])]
+        if config.OLLAMA_MODEL not in models:
+            logger.warning(f"Modello {config.OLLAMA_MODEL} non installato. Disponibili: {models}")
+            return False
+        return True
     except Exception as e:
-        print(f"❌ Ollama test ERROR: {e}")
+        logger.warning(f"Ollama test ERROR: {e}")
         return False
 
 

@@ -21,9 +21,7 @@ def leggiFileCSV():
             key = 1
             prod = {}
             for line in f:
-                print(f"Lettura riga: {line}")
                 value = createSubStringLinkAmazon(line)
-                print(f"Value : {value}")
                 if value:
                     prod[key] = value
                     key += 1
@@ -34,6 +32,8 @@ def leggiFileCSV():
     return prod     
 
 def trovaLink(inputLink):
+    if not inputLink:
+        return None
     with open('file.csv', 'r') as f:
         for line in f:
             if line != None and inputLink in line:
@@ -44,10 +44,10 @@ def nomeProdotto(productTitle):
     return productTitle
 
 def duplicateProd(link):
-    with open('file.csv', 'r') as f:
-        if f.read().find(link) != -1:
-            return "Product already in the list"
-        else:
-            return saveLink(link)
-        
-    return 'Nessuna operazione svolta!'
+    try:
+        with open('file.csv', 'r') as f:
+            if link in f.read().split():
+                return "Product already in the list"
+    except FileNotFoundError:
+        pass
+    return saveLink(link)

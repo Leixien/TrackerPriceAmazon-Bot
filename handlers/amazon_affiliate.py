@@ -1,11 +1,13 @@
 """
 Handler per conversione link Amazon in link affiliati
 """
+import asyncio
 import re
 import json
 import logging
 import os
 from datetime import datetime
+from urllib.parse import urlparse
 from telegram import Update
 from telegram.ext import ContextTypes
 import requests
@@ -13,6 +15,72 @@ import config
 from utils import user_manager
 
 logger = logging.getLogger(__name__)
+
+
+# Host ammessi: solo domini Amazon reali. Qualsiasi altro host viene rifiutato
+# per evitare SSRF (es. http://192.168.1.10/?amazon.it oppure http://localhost:11434).
+AMAZON_HOSTS = {'amazon.it', 'www.amazon.it', 'm.amazon.it'}
+SHORT_LINK_HOSTS = {'amzn.eu', 'amzn.to', 'a.co'}
+
+ASIN_PATTERNS = [
+    r'/dp/([A-Z0-9]{10})',
+    r'/gp/product/([A-Z0-9]{10})',
+    r'/gp/aw/d/([A-Z0-9]{10})',
+    r'/product/([A-Z0-9]{10})',
+]
+
+
+def _hostname(url):
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    return (parsed.hostname or '').lower() or None
+
+
+def is_amazon_url(url):
+    """True solo se l'URL punta davvero a un host Amazon (o short link Amazon)."""
+    host = _hostname(url)
+    return host in AMAZON_HOSTS or host in SHORT_LINK_HOSTS
+
+
+def _asin_from_path(url):
+    for pattern in ASIN_PATTERNS:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def resolve_short_link(url):
+    """
+    Risolve uno short link Amazon seguendo i redirect UNO alla volta e
+    verificando che ogni hop resti su un host Amazon.
+
+    Returns:
+        str: URL finale amazon.it oppure None
+    """
+    current = url
+    for _ in range(5):
+        host = _hostname(current)
+        if host in AMAZON_HOSTS:
+            return current
+        if host not in SHORT_LINK_HOSTS:
+            logger.warning(f"Redirect verso host non Amazon bloccato: {host}")
+            return None
+        try:
+            response = requests.get(current, allow_redirects=False, timeout=5, stream=True)
+            response.close()
+        except requests.RequestException as e:
+            logger.error(f"Errore nel risolvere short link {url}: {e}")
+            return None
+        location = response.headers.get('Location')
+        if not location:
+            return None
+        current = requests.compat.urljoin(current, location)
+    return None
 
 
 def extract_asin(url):
@@ -29,60 +97,33 @@ def extract_asin(url):
         url (str): URL Amazon
 
     Returns:
-        str: ASIN o None se non trovato
+        str: ASIN o None se non trovato / URL non Amazon
     """
-    # Pattern per ASIN standard (formato dp/ o gp/product/)
-    patterns = [
-        r'/dp/([A-Z0-9]{10})',
-        r'/gp/product/([A-Z0-9]{10})',
-        r'/product/([A-Z0-9]{10})',
-    ]
+    host = _hostname(url)
 
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
+    if host in AMAZON_HOSTS:
+        return _asin_from_path(url)
 
-    # Gestione link short amzn.eu/d/
-    if 'amzn.eu' in url or 'amzn.to' in url:
-        try:
-            # Segui il redirect per ottenere l'URL completo
-            response = requests.get(url, allow_redirects=True, timeout=5)
-            full_url = response.url
+    if host in SHORT_LINK_HOSTS:
+        full_url = resolve_short_link(url)
+        if full_url:
             logger.info(f"Short link {url} resolved to {full_url}")
-
-            # Riprova con l'URL completo
-            for pattern in patterns:
-                match = re.search(pattern, full_url)
-                if match:
-                    return match.group(1)
-        except Exception as e:
-            logger.error(f"Errore nel risolvere short link {url}: {e}")
+            return _asin_from_path(full_url)
 
     return None
 
 
 def is_amazon_link(text):
     """
-    Verifica se il testo contiene un link Amazon.it
+    Verifica se il testo contiene almeno un URL Amazon valido
 
     Args:
         text (str): Testo da verificare
 
     Returns:
-        bool: True se contiene link Amazon.it
+        bool: True se contiene link Amazon
     """
-    amazon_patterns = [
-        r'amazon\.it',
-        r'amzn\.eu',
-        r'amzn\.to'
-    ]
-
-    for pattern in amazon_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-
-    return False
+    return any(is_amazon_url(u) for u in extract_urls_from_text(text or ''))
 
 
 def extract_urls_from_text(text):
@@ -122,11 +163,12 @@ def _load_stats():
             return {
                 "total_conversions": 0,
                 "conversions_by_user": {},
-                "daily_stats": {}
+                "daily_stats": {},
+                "daily_by_user": {}
             }
     except Exception as e:
         logger.error(f"Errore caricamento stats.json: {e}")
-        return {"total_conversions": 0, "conversions_by_user": {}, "daily_stats": {}}
+        return {"total_conversions": 0, "conversions_by_user": {}, "daily_stats": {}, "daily_by_user": {}}
 
 
 def _save_stats(data):
@@ -154,11 +196,17 @@ def increment_stats(user_id):
     stats['total_conversions'] = stats.get('total_conversions', 0) + 1
 
     # Incrementa per utente
+    stats.setdefault('conversions_by_user', {})
     if user_id_str not in stats['conversions_by_user']:
         stats['conversions_by_user'][user_id_str] = 0
     stats['conversions_by_user'][user_id_str] += 1
 
+    # Incrementa giornaliero per utente
+    stats.setdefault('daily_by_user', {}).setdefault(today, {})
+    stats['daily_by_user'][today][user_id_str] = stats['daily_by_user'][today].get(user_id_str, 0) + 1
+
     # Incrementa giornaliero
+    stats.setdefault('daily_stats', {})
     if today not in stats['daily_stats']:
         stats['daily_stats'][today] = 0
     stats['daily_stats'][today] += 1
@@ -181,7 +229,7 @@ def get_user_stats(user_id):
     today = datetime.now().strftime('%Y-%m-%d')
 
     total = stats.get('conversions_by_user', {}).get(user_id_str, 0)
-    today_count = stats.get('daily_stats', {}).get(today, 0)
+    today_count = stats.get('daily_by_user', {}).get(today, {}).get(user_id_str, 0)
 
     return {'today': today_count, 'total': total}
 
@@ -203,7 +251,7 @@ async def handle_message_with_amazon_link(update: Update, context: ContextTypes.
 
     # Estrai tutti gli URL dal messaggio
     urls = extract_urls_from_text(text)
-    amazon_urls = [url for url in urls if is_amazon_link(url)]
+    amazon_urls = [url for url in urls if is_amazon_url(url)]
 
     if not amazon_urls:
         return
@@ -211,7 +259,7 @@ async def handle_message_with_amazon_link(update: Update, context: ContextTypes.
     # Converti tutti i link Amazon trovati
     affiliate_links = []
     for url in amazon_urls:
-        asin = extract_asin(url)
+        asin = await asyncio.to_thread(extract_asin, url)
         if asin:
             affiliate_link = create_affiliate_link(asin)
             affiliate_links.append(affiliate_link)
@@ -265,7 +313,7 @@ async def convert_link_command(update: Update, context: ContextTypes.DEFAULT_TYP
     url = context.args[0]
 
     # Verifica se è un link Amazon
-    if not is_amazon_link(url):
+    if not is_amazon_url(url):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=config.MESSAGES['invalid_link']
@@ -273,7 +321,7 @@ async def convert_link_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # Estrai ASIN
-    asin = extract_asin(url)
+    asin = await asyncio.to_thread(extract_asin, url)
 
     if not asin:
         await context.bot.send_message(
