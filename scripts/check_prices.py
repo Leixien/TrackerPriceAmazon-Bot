@@ -16,6 +16,7 @@ import os
 import logging
 from datetime import datetime
 import asyncio
+import html
 
 # Aggiungi parent directory al path per import
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -69,7 +70,7 @@ async def check_all_prices():
 
         try:
             # Scrapa prezzo attuale da Amazon
-            price_str = scraper.findPrice(url)
+            price_str = await asyncio.to_thread(scraper.findPrice, url)
 
             if not price_str:
                 logger.warning(f"Impossibile recuperare prezzo per {asin}")
@@ -124,8 +125,8 @@ async def check_all_prices():
         for alert in triggered_alerts:
             user_id = alert['user_id']
             asin = alert['asin']
-            target_price = alert['target_price']
-            current_price = alert['current_price']
+            target_price = float(alert['target_price'])
+            current_price = float(alert['current_price'])
             product_name = alert['product_name']
             url = alert.get('url', '')
 
@@ -174,7 +175,7 @@ async def send_price_change_notification(bot, user_id, product_name, asin, old_p
     affiliate_link = amazon_affiliate.create_affiliate_link(asin)
 
     message = f"{emoji} <b>Cambio Prezzo!</b>\n\n" \
-              f"📦 {product_name}\n\n" \
+              f"📦 {html.escape(product_name or 'Prodotto')}\n\n" \
               f"💰 Prezzo {change_text}\n" \
               f"   Prima: {old_price:.2f}€\n" \
               f"   Ora: {new_price:.2f}€\n\n" \
@@ -211,7 +212,7 @@ async def send_alert_notification(bot, user_id, product_name, asin, target_price
     affiliate_link = amazon_affiliate.create_affiliate_link(asin)
 
     message = f"🎯 <b>ALERT PREZZO RAGGIUNTO!</b>\n\n" \
-              f"📦 {product_name}\n\n" \
+              f"📦 {html.escape(product_name or 'Prodotto')}\n\n" \
               f"✅ Il prodotto è sceso sotto il tuo target!\n" \
               f"   Target: {target_price:.2f}€\n" \
               f"   Attuale: <b>{current_price:.2f}€</b>\n\n" \
@@ -231,23 +232,8 @@ async def send_alert_notification(bot, user_id, product_name, asin, target_price
 
 
 def parse_price(price_str):
-    """
-    Estrae prezzo numerico da stringa
-
-    Args:
-        price_str (str): Stringa prezzo
-
-    Returns:
-        float: Prezzo numerico o None
-    """
-    try:
-        import re
-        price_clean = re.sub(r'[^\d,.]', '', price_str)
-        price_clean = price_clean.replace(',', '.')
-        return float(price_clean)
-    except Exception as e:
-        logger.error(f"Errore parsing prezzo '{price_str}': {e}")
-        return None
+    """Estrae prezzo numerico da stringa (vedi scraper.parse_price)"""
+    return scraper.parse_price(price_str)
 
 
 if __name__ == "__main__":

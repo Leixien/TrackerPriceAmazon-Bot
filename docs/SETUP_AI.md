@@ -180,7 +180,9 @@ sudo systemctl status ollama
 sudo netstat -tlnp | grep 11434
 
 # Se usa firewall
-sudo ufw allow 11434
+# ⚠️ NON aprire la porta a tutti: Ollama non ha autenticazione.
+# Consenti solo l'IP del server del bot:
+sudo ufw allow from IP_SERVER_BOT to any port 11434 proto tcp
 ```
 
 ### Problema: "Model not found"

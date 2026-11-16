@@ -2,7 +2,10 @@
 Handler per Price Tracking con Supabase
 Comandi per tracciare prezzi prodotti Amazon
 """
+import asyncio
+import html
 import logging
+import re
 from telegram import Update
 from telegram.ext import ContextTypes
 import config
@@ -11,6 +14,8 @@ from handlers import amazon_affiliate
 import scraper
 
 logger = logging.getLogger(__name__)
+
+ASIN_RE = re.compile(r'[A-Z0-9]{10}')
 
 
 async def track_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,7 +53,7 @@ async def track_product_command(update: Update, context: ContextTypes.DEFAULT_TY
     url = context.args[0]
 
     # Verifica link Amazon
-    if not amazon_affiliate.is_amazon_link(url):
+    if not amazon_affiliate.is_amazon_url(url):
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⚠️ Link Amazon non valido. Assicurati che sia un link amazon.it!"
@@ -62,7 +67,7 @@ async def track_product_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     # Estrai ASIN
-    asin = amazon_affiliate.extract_asin(url)
+    asin = await asyncio.to_thread(amazon_affiliate.extract_asin, url)
     if not asin:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -72,8 +77,10 @@ async def track_product_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Scrapa prodotto da Amazon
     try:
-        product_name = scraper.findProdTitle(url)
-        price_str = scraper.findPrice(url)
+        # Salviamo sempre l'URL canonico (niente parametri utente arbitrari)
+        url = f"https://www.amazon.it/dp/{asin}/"
+        product_name = await asyncio.to_thread(scraper.findProdTitle, url)
+        price_str = await asyncio.to_thread(scraper.findPrice, url)
 
         if not product_name or not price_str:
             await context.bot.send_message(
@@ -111,7 +118,7 @@ async def track_product_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     if success:
         response = f"✅ <b>Prodotto aggiunto al tracking!</b>\n\n" \
-                   f"📦 {product_name}\n" \
+                   f"📦 {html.escape(product_name)}\n" \
                    f"💰 Prezzo attuale: {price}€\n" \
                    f"🔗 ASIN: {asin}\n\n" \
                    f"Ti avviserò quando il prezzo cambia! 🔔\n\n" \
@@ -161,7 +168,13 @@ async def untrack_product_command(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    asin = context.args[0].strip()
+    asin = context.args[0].strip().upper()
+    if not ASIN_RE.fullmatch(asin):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ ASIN non valido (deve essere di 10 caratteri alfanumerici, es. B08N5WRWNW)"
+        )
+        return
 
     # Rimuovi da Supabase
     success = supabase_manager.remove_tracked_product(user_id, asin)
@@ -212,8 +225,8 @@ async def my_products_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     response = f"📊 <b>I tuoi prodotti tracciati</b> ({len(products)})\n\n"
 
     for i, product in enumerate(products[:10], 1):  # Max 10 prodotti per messaggio
-        name = product.get('product_name', 'N/A')[:50]  # Tronca nome lungo
-        asin = product.get('asin', 'N/A')
+        name = html.escape((product.get('product_name') or 'N/A')[:50])  # Tronca nome lungo
+        asin = html.escape(product.get('asin') or 'N/A')
         initial_price = product.get('initial_price', 0)
         last_price = product.get('last_price', 0)
 
@@ -281,7 +294,13 @@ async def set_alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    asin = context.args[0].strip()
+    asin = context.args[0].strip().upper()
+    if not ASIN_RE.fullmatch(asin):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ ASIN non valido (deve essere di 10 caratteri alfanumerici, es. B08N5WRWNW)"
+        )
+        return
 
     try:
         target_price = float(context.args[1].replace(',', '.'))
@@ -340,7 +359,13 @@ async def price_history_command(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    asin = context.args[0].strip()
+    asin = context.args[0].strip().upper()
+    if not ASIN_RE.fullmatch(asin):
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ ASIN non valido (deve essere di 10 caratteri alfanumerici, es. B08N5WRWNW)"
+        )
+        return
 
     # Recupera storico
     history = supabase_manager.get_price_history(asin, days=30)
@@ -385,25 +410,5 @@ async def price_history_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def parse_price(price_str):
-    """
-    Estrae prezzo numerico da stringa
-
-    Args:
-        price_str (str): Stringa prezzo (es: "Prezzo --> 99,99 €")
-
-    Returns:
-        float: Prezzo numerico o None se errore
-    """
-    try:
-        # Rimuovi tutto tranne numeri, virgola e punto
-        import re
-        price_clean = re.sub(r'[^\d,.]', '', price_str)
-
-        # Sostituisci virgola con punto
-        price_clean = price_clean.replace(',', '.')
-
-        return float(price_clean)
-
-    except Exception as e:
-        logger.error(f"Errore parsing prezzo '{price_str}': {e}")
-        return None
+    """Estrae prezzo numerico da stringa (vedi scraper.parse_price)"""
+    return scraper.parse_price(price_str)
